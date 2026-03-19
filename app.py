@@ -36,7 +36,7 @@ def org_only(f):
 
 
 # Database connection (Render provides DATABASE_URL in env vars)
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://sustainabos_db_user:iNmAcRXSGKOSHgvQGzltdBUSMcDz0dZN@dpg-d2r54315pdvs738sd3i0-a/sustainabos_db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://sustainabos_db_admin:iNmAcRXSGKOSHgvQGzltdBUSMcDz0dZN@bos.postgres.database.azure.com/sustainabos_db_test")
 
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -3614,4 +3614,7 @@ def notify_new_device():
 
 
 if __name__ == '__main__':
+    with app.app_context():
+      db.create_all()
+      seed_users()
     app.run(debug=True)
