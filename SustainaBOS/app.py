@@ -36,7 +36,7 @@ def org_only(f):
 
 
 # Database connection (Render provides DATABASE_URL in env vars)
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://sustainabos_db_user:iNmAcRXSGKOSHgvQGzltdBUSMcDz0dZN@dpg-d2r54315pdvs738sd3i0-a/sustainabos_db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://feilgpbcbr:iNmAcRXSGKOSHgvQGzltdBUSMcDz0dZN@bosapp-server.postgres.database.azure.com/bosapp-database")
 
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
