@@ -9,6 +9,9 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Create a Flask app
 app = Flask(__name__)
 
@@ -36,7 +39,9 @@ def org_only(f):
 
 
 # Database connection (Render provides DATABASE_URL in env vars)
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://sustainabos_db_admin:iNmAcRXSGKOSHgvQGzltdBUSMcDz0dZN@bos.postgres.database.azure.com/sustainabos_db_test")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set")
 
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
