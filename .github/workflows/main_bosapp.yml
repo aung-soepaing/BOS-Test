@@ -22,7 +22,7 @@ jobs:
       - name: Set up Python version
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.12'
 
       # Install system packages required to build pillow and other dependencies
       - name: Install system dependencies
