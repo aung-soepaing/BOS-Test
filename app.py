@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, flash, abort
 import os
+import threading
 import smtplib
 from email.mime.text import MIMEText
 from flask_sqlalchemy import SQLAlchemy
@@ -133,74 +134,144 @@ def seed_users():
 
 
 
-# Load the Excel file with specified column names starting from row 8 and column B
-file_path = 'Vessel_Device_Installation_Tracker NV.xlsx'
+# Load and transform Excel data lazily to keep Azure startup fast.
+file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Vessel_Device_Installation_Tracker NV.xlsx')
 column_names = ['Vessel Name/ ID', 'Spec', 'Devices', 'Installation Status', 'Date of Installation', 'Savings/year (fuel efficiency)', 'Savings/year (Maitenance)', 'Co2 savings ton/year']
-df = pd.read_excel(file_path, engine='openpyxl', names=column_names, skiprows=7, usecols="B:I")
 
-list_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Tracker', skiprows=6, nrows=470, usecols="B:J")
+df = pd.DataFrame()
+list_df = pd.DataFrame()
+summary_df = pd.DataFrame()
+summary2_df = pd.DataFrame()
+summary3_df = pd.DataFrame()
+summary4_df = pd.DataFrame()
+summary_raw = pd.DataFrame()
+listvessel_df = pd.DataFrame()
+listdevice_df = pd.DataFrame()
+vessel_devices = pd.DataFrame()
 
-# Load the summary sheet
-summary_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=0,  nrows=18, usecols="A:F")
+initiative_desc_map = {}
+kpis = []
+kpis_section = []
+vessels10 = {"names": [], "values": []}
+donutdev = {
+  "labels": ["IWTM P10", "EFMS", "MGPS", "LED", "Nautilus Log", "Shore Generator"],
+  "values": [216, 289, 400, 320, 80, 50]
+}
 
-summary2_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=15,  nrows=3, usecols="B:C")
+_excel_data_loaded = False
+_excel_data_error = None
+_excel_data_lock = threading.Lock()
 
-summary3_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=0,  nrows=4, usecols="I:K")
-
-summary4_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=1,  nrows=17, usecols="Y:Z")
-
-# Convert to dict { "EFMS": "Energy & Fuel...", ... }
-initiative_desc_map = dict(zip(summary4_df.iloc[:,0], summary4_df.iloc[:,1]))
-
-
-# --- KPIs for Home (Summary!C21:C23) ---
-# We read the sheet without headers so we can address Excel cells by (row-1, col-1)
-summary_raw = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', header=None)
 
 def _num(i, j):
-    v = pd.to_numeric(summary_raw.iat[i, j], errors='coerce')
-    return 0 if pd.isna(v) else float(v)
+  v = pd.to_numeric(summary_raw.iat[i, j], errors='coerce')
+  return 0 if pd.isna(v) else float(v)
 
-kpi_devices_raw     = int(_num(24, 2))   # C25 (row index -1, col index -1)
-kpi_gain_raw  = _num(4, 9) *100       # J5
-kpi_co2_raw         = _num(23, 2)        # C24
 
-# Clean / round:
-kpi_devices = int(round(kpi_devices_raw))            # integer count
-kpi_gain = round(kpi_gain_raw, 2)        # two decimal for %
-kpi_co2 = round(kpi_co2_raw, 0)                      # zero decimal for tonnes
+def load_excel_data():
+  global df, list_df, summary_df, summary2_df, summary3_df, summary4_df
+  global summary_raw, initiative_desc_map, kpis, kpis_section
+  global listvessel_df, listdevice_df, vessel_devices, vessels10
 
-# Prepare a list for the template (we’ll animate these later)
-kpis = [
-    {"title": "Initiatives", "value": kpi_devices,    "suffix": "",
-        "back": ["8 initiatives certified", "9 initiatives on POC"]},
-    {"title": "2025 Fuel Gain",        "value": kpi_gain, "suffix": "%",
-        "back": ["Scope 1 Only. Goal 2026:", "20% Fuel savings"]},
-    {"title": "CO₂ Savings",       "value": kpi_co2,        "suffix": " t",
-        "back": ["Expected savings", "based on fuel savings"]},
-]
+  df = pd.read_excel(file_path, engine='openpyxl', names=column_names, skiprows=7, usecols="B:I")
+  list_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Tracker', skiprows=6, nrows=470, usecols="B:J")
 
-# --- KPIs for KPI's section ---
-# --- KPIs for KPI Section (Summary!J7, J8, J4) ---
-kpi_tfc_raw       = _num(6, 9)   # J7
-kpi_vessels_raw   = _num(7, 9)   # J8
-kpi_update_raw    = _num(3, 9)*90   # J4
+  summary_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=0, nrows=18, usecols="A:F")
+  summary2_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=15, nrows=3, usecols="B:C")
+  summary3_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=0, nrows=4, usecols="I:K")
+  summary4_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=1, nrows=17, usecols="Y:Z")
 
-# Clean
-kpi_tfc = int(round(kpi_tfc_raw))
-kpi_vessels = int(round(kpi_vessels_raw))
-kpi_update = int(round(kpi_update_raw))   # probably a string/date? keep as is. If not check
+  # Convert to dict { "EFMS": "Energy & Fuel...", ... }
+  initiative_desc_map = dict(zip(summary4_df.iloc[:, 0], summary4_df.iloc[:, 1]))
 
-# Prepare for template
-kpis_section = [
-    {"title": "Last 12 months TFC", "value": kpi_tfc,     "suffix": " t"},
-    {"title": "Number of Vessels", "value": kpi_vessels,     "suffix": ""},
-    {"title": "Updated Info", "value": kpi_update,     "suffix": "%"},
-]
+  # --- KPIs for Home (Summary!C21:C23) ---
+  # We read the sheet without headers so we can address Excel cells by (row-1, col-1)
+  summary_raw = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', header=None)
 
-#print(kpis_section)
+  kpi_devices_raw = int(_num(24, 2))  # C25 (row index -1, col index -1)
+  kpi_gain_raw = _num(4, 9) * 100  # J5
+  kpi_co2_raw = _num(23, 2)  # C24
+
+  # Clean / round:
+  kpi_devices = int(round(kpi_devices_raw))
+  kpi_gain = round(kpi_gain_raw, 2)
+  kpi_co2 = round(kpi_co2_raw, 0)
+
+  # Prepare a list for the template (we'll animate these later)
+  kpis = [
+    {"title": "Initiatives", "value": kpi_devices, "suffix": "", "back": ["8 initiatives certified", "9 initiatives on POC"]},
+    {"title": "2025 Fuel Gain", "value": kpi_gain, "suffix": "%", "back": ["Scope 1 Only. Goal 2026:", "20% Fuel savings"]},
+    {"title": "CO₂ Savings", "value": kpi_co2, "suffix": " t", "back": ["Expected savings", "based on fuel savings"]},
+  ]
+
+  # --- KPIs for KPI section (Summary!J7, J8, J4) ---
+  kpi_tfc_raw = _num(6, 9)  # J7
+  kpi_vessels_raw = _num(7, 9)  # J8
+  kpi_update_raw = _num(3, 9) * 90  # J4
+
+  kpi_tfc = int(round(kpi_tfc_raw))
+  kpi_vessels = int(round(kpi_vessels_raw))
+  kpi_update = int(round(kpi_update_raw))
+
+  kpis_section = [
+    {"title": "Last 12 months TFC", "value": kpi_tfc, "suffix": " t"},
+    {"title": "Number of Vessels", "value": kpi_vessels, "suffix": ""},
+    {"title": "Updated Info", "value": kpi_update, "suffix": "%"},
+  ]
+
+  # Load the list of vessel and devices
+  listvessel_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=26, nrows=72, usecols="A")
+  listdevice_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=1, nrows=17, usecols="A")
+
+  # Filter the relevant vessels
+  vessels_of_interest = df[df['Vessel Name/ ID'].astype(str).str.contains('Britoil|ENA Habitat|BOS|Lewek Hydra|Nautical Aisia|Nautical Anisha|Paragon Sentinel', na=False)]
+
+  # Extract relevant columns
+  vessel_devices = vessels_of_interest[['Vessel Name/ ID', 'Devices', 'Installation Status', 'Savings/year (fuel efficiency)', 'Savings/year (Maitenance)', 'Co2 savings ton/year']]
+
+  # Convert all savings columns to numeric, forcing errors to NaN
+  vessel_devices['Savings/year (fuel efficiency)'] = pd.to_numeric(vessel_devices['Savings/year (fuel efficiency)'], errors='coerce')
+  vessel_devices['Savings/year (Maitenance)'] = pd.to_numeric(vessel_devices['Savings/year (Maitenance)'], errors='coerce')
+  vessel_devices['Co2 savings ton/year'] = pd.to_numeric(vessel_devices['Co2 savings ton/year'], errors='coerce')
+
+  # Calculate total savings for each vessel
+  vessel_devices['Total Savings'] = vessel_devices['Savings/year (fuel efficiency)'].fillna(0) + vessel_devices['Savings/year (Maitenance)'].fillna(0) + vessel_devices['Co2 savings ton/year'].fillna(0)
+
+  # Create chart file used by the app
+  top_vessels = vessel_devices.groupby('Vessel Name/ ID')['Total Savings'].sum().nlargest(10).reset_index()
+  plt.figure(figsize=(10, 6))
+  plt.bar(top_vessels['Vessel Name/ ID'], top_vessels['Total Savings'], color='blue')
+  plt.xlabel('Vessel Name')
+  plt.ylabel('Total Savings')
+  plt.title('Top 10 Vessels with Best Performance')
+  plt.xticks(rotation=45)
+  plt.tight_layout()
+  plt.savefig('static/top_vessels_chart.png')
+  plt.close()
+
+  # --- Top 10 Vessel Savings (Summary!A99:B108) ---
+  vessels10r = summary_raw.loc[98:107, 0].dropna().astype(str).tolist()
+  savings10r = pd.to_numeric(summary_raw.loc[98:107, 1], errors="coerce").fillna(0).tolist()
+  vessels10 = {"names": vessels10r, "values": savings10r}
+
+
+def ensure_excel_data_loaded():
+  global _excel_data_loaded, _excel_data_error
+  if _excel_data_loaded:
+    return
+  with _excel_data_lock:
+    if _excel_data_loaded:
+      return
+    try:
+      load_excel_data()
+      _excel_data_loaded = True
+      _excel_data_error = None
+    except Exception as exc:
+      _excel_data_error = str(exc)
+      raise
 
 def get_vessel_summary(vessel_name):
+    ensure_excel_data_loaded()
 
     #print(list_df.iloc[:, 1])
    
@@ -249,6 +320,7 @@ def get_vessel_summary_route():
     return summaryBIS_df.to_html(index=False, classes='table table-bordered table-striped', border=0)
 
 def get_device_summary(device_name):
+    ensure_excel_data_loaded()
 
     # TO DO
 
@@ -320,47 +392,6 @@ def get_device_summary_route():
 #M=summaryBIS_df.dropna().tolist()
 #print(M)
 
-# Load the list of vessel
-listvessel_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=26,  nrows=72, usecols="A")
-
-# Load the list of devices
-listdevice_df = pd.read_excel(file_path, engine='openpyxl', sheet_name='Summary', skiprows=1,  nrows=17, usecols="A")
-#print(listdevice_df)
-
-
-       # vessel_names = listvessel_df.dropna().tolist()
-# print(listvessel_df)
-# print(listvessel_df.columns)
-
-#Unuseful section below, before the region charts
-
-# Filter the relevant vessels
-vessels_of_interest = df[df['Vessel Name/ ID'].astype(str).str.contains('Britoil|ENA Habitat|BOS|Lewek Hydra|Nautical Aisia|Nautical Anisha|Paragon Sentinel', na=False)]
-
-# Extract relevant columns
-vessel_devices = vessels_of_interest[['Vessel Name/ ID', 'Devices', 'Installation Status', 'Savings/year (fuel efficiency)', 'Savings/year (Maitenance)', 'Co2 savings ton/year']]
-
-# Convert all savings columns to numeric, forcing errors to NaN
-vessel_devices['Savings/year (fuel efficiency)'] = pd.to_numeric(vessel_devices['Savings/year (fuel efficiency)'], errors='coerce')
-vessel_devices['Savings/year (Maitenance)'] = pd.to_numeric(vessel_devices['Savings/year (Maitenance)'], errors='coerce')
-vessel_devices['Co2 savings ton/year'] = pd.to_numeric(vessel_devices['Co2 savings ton/year'], errors='coerce')
-
-# Calculate total savings for each vessel
-vessel_devices['Total Savings'] = vessel_devices['Savings/year (fuel efficiency)'].fillna(0) + vessel_devices['Savings/year (Maitenance)'].fillna(0) + vessel_devices['Co2 savings ton/year'].fillna(0)
-
-# Get the top 10 vessels with the best performance
-top_vessels = vessel_devices.groupby('Vessel Name/ ID')['Total Savings'].sum().nlargest(10).reset_index()
-
-# Create a bar chart for the top 10 vessels
-plt.figure(figsize=(10, 6))
-plt.bar(top_vessels['Vessel Name/ ID'], top_vessels['Total Savings'], color='blue')
-plt.xlabel('Vessel Name')
-plt.ylabel('Total Savings')
-plt.title('Top 10 Vessels with Best Performance')
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.savefig('static/top_vessels_chart.png')
-
 #region charts
 
 # --- Fuel Consumption Data (Monthly) ---
@@ -400,23 +431,7 @@ oil_latest = 100-oil_data["OIL_WATER"][-1]   # last DEFIANCE value
 ppm_latest = 100-oil_data["PPM_2um"][-1]
 cond_latest = 100-cw_data["CONDUCTIVITY"][-1]
 
-# --- Top 10 Vessel Savings (Summary!A99:B108) ---
-
-vessels10r = summary_raw.loc[98:107, 0].dropna().astype(str).tolist()  # Column A (names)
-savings10r = pd.to_numeric(summary_raw.loc[98:107, 1], errors="coerce").fillna(0).tolist()  # Column B (values)
-
-vessels10 = {"names": vessels10r, "values": savings10r}
-
-#print(vessels10)
-
-# --- Savings by Device (hardcoded for now) ---
-donutdev = {
-    "labels": ["IWTM P10", "EFMS", "MGPS", "LED", "Nautilus Log", "Shore Generator"],
-    "values": [216, 289, 400, 320, 80, 50]
-}
-
-#print(type(vessels10["names"]), type(vessels10["values"]))
-#print(type(donutdev["labels"]), type(donutdev["values"]))
+# Top-10 and donut chart values are prepared by load_excel_data().
 
 
 #region HTML section
@@ -2832,7 +2847,8 @@ def index():
     if 'user' not in session:
         return redirect(url_for('login'))
 
-    
+    ensure_excel_data_loaded()
+
     import json
     #print(json.dumps(vessels10))   ← vérifie que ça passe
     #print(json.dumps(donutdev))    ← vérifie que ça passe
@@ -3070,6 +3086,8 @@ def login():
 
 @app.route("/survey", methods=["GET", "POST"])
 def survey():
+    ensure_excel_data_loaded()
+
     vessels = list(listvessel_df['BOS DUBAI'])  # your DataFrame
     #print(vessels)
     devices = list(listdevice_df['Device'])  # 15 devices
