@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authentication Diagnostics</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 30px; font-size: 28px; }
+        .section { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .section h2 { color: #0066cc; font-size: 18px; margin-bottom: 15px; border-bottom: 2px solid #0066cc; padding-bottom: 10px; }
+        .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
+        .info-item { background: #f9f9f9; padding: 12px; border-radius: 5px; border-left: 4px solid #0066cc; }
+        .info-label { font-weight: 600; color: #333; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .info-value { font-size: 16px; color: #555; margin-top: 6px; word-break: break-all; }
+        .status-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+        .status-true { background: #d4edda; color: #155724; }
+        .status-false { background: #f8d7da; color: #721c24; }
+        .role-list { list-style: none; margin-top: 8px; }
+        .role-list li { background: #e3f2fd; padding: 8px 12px; margin: 4px 0; border-radius: 4px; color: #1565c0; font-family: monospace; }
+        .role-list li:before { content: "✓ "; color: #1565c0; font-weight: bold; }
+        .empty-list { color: #999; font-style: italic; }
+        .help-section { background: #fffbea; border-left: 4px solid #ffc107; padding: 15px; border-radius: 5px; margin-top: 15px; }
+        .help-section h3 { color: #ff9800; font-size: 14px; margin-bottom: 10px; }
+        .help-section p { color: #555; font-size: 13px; line-height: 1.5; margin: 5px 0; }
+        .code-block { background: #f5f5f5; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #333; overflow-x: auto; margin-top: 10px; }
+        .navbar { background: #333; padding: 15px 20px; margin: -20px -20px 30px -20px; }
+        .navbar a { color: #0066cc; text-decoration: none; font-weight: 500; }
+        .navbar a:hover { text-decoration: underline; }
+        .navbar span { color: #999; margin: 0 10px; }
+        .success { color: #155724; }
+        .error { color: #721c24; }
+        .warning { color: #ff9800; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="navbar">
+            <a href="{{ url_for('index') }}">← Back to Dashboard</a>
+            <span>|</span>
+            <a href="{{ url_for('admin_dashboard') }}">Admin Panel</a>
+        </div>
+
+        <h1>🔐 Authentication Diagnostics</h1>
+
+        <!-- Basic Session Info -->
+        <div class="section">
+            <h2>Session Information</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Username</div>
+                    <div class="info-value">{{ diagnostics.username }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Auth Provider</div>
+                    <div class="info-value">
+                        <code>{{ diagnostics.auth_provider or 'None (not authenticated)' }}</code>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Admin Status</div>
+                    <div class="info-value">
+                        <span class="status-badge {% if diagnostics.is_admin %}status-true{% else %}status-false{% endif %}">
+                            {% if diagnostics.is_admin %}✓ Admin{% else %}✗ User{% endif %}
+                        </span>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Logged In</div>
+                    <div class="info-value">
+                        <span class="status-badge {% if diagnostics.is_logged_in %}status-true{% else %}status-false{% endif %}">
+                            {% if diagnostics.is_logged_in %}✓ Yes{% else %}✗ No{% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Entra-Specific Info -->
+        {% if diagnostics.auth_provider == 'entra' and diagnostics.entra_info %}
+        <div class="section">
+            <h2>Microsoft Entra ID (SSO) Information</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Entra User Status</div>
+                    <div class="info-value">
+                        <span class="status-badge {% if diagnostics.entra_info.entra_is_user %}status-true{% else %}status-false{% endif %}">
+                            {% if diagnostics.entra_info.entra_is_user %}✓ Assigned{% else %}✗ Not Assigned{% endif %}
+                        </span>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Entra Admin Status</div>
+                    <div class="info-value">
+                        <span class="status-badge {% if diagnostics.entra_info.entra_is_admin %}status-true{% else %}status-false{% endif %}">
+                            {% if diagnostics.entra_info.entra_is_admin %}✓ Admin Role{% else %}✗ User Role{% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Token Roles Claim -->
+            <div style="margin-top: 20px;">
+                <strong style="color: #333;">Token Roles Claim (matched):</strong>
+                <ul class="role-list">
+                    {% if diagnostics.entra_info.matched_role_values %}
+                        {% for role in diagnostics.entra_info.matched_role_values %}
+                            <li>{{ role }}</li>
+                        {% endfor %}
+                    {% else %}
+                        <li class="empty-list">No roles found in token</li>
+                    {% endif %}
+                </ul>
+            </div>
+
+            <!-- Expected Roles Configuration -->
+            <div style="margin-top: 20px;">
+                <strong style="color: #333;">Configuration (hardcoded role values):</strong>
+                
+                <div style="margin-top: 10px; padding: 10px; background: #f0f4ff; border-radius: 5px;">
+                    <strong style="color: #1565c0; font-size: 13px;">Admin Roles Expected:</strong>
+                    <ul class="role-list">
+                        {% for role in diagnostics.entra_info.expected_admin_roles %}
+                            <li>{{ role }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+
+                <div style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 5px;">
+                    <strong style="color: #1565c0; font-size: 13px;">User Roles Expected:</strong>
+                    <ul class="role-list">
+                        {% for role in diagnostics.entra_info.expected_user_roles %}
+                            <li>{{ role }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Help Section for Entra -->
+            <div class="help-section">
+                <h3>🔍 Troubleshooting Entra SSO</h3>
+                {% if not diagnostics.entra_info.matched_role_values %}
+                    <p><strong class="error">⚠ Issue: No roles found in your Entra token</strong></p>
+                    <p>This typically means one of the following:</p>
+                    <ol style="margin-left: 20px;">
+                        <li><strong>App roles not defined:</strong> In your app registration manifest, add the app roles: <code style="font-family: monospace; background: #eee; padding: 2px 4px;">app_users</code> and <code style="font-family: monospace; background: #eee; padding: 2px 4px;">app_admin</code></li>
+                        <li><strong>User not assigned:</strong> In Enterprise Applications, go to "Users and groups" and assign this user or their group to a role</li>
+                        <li><strong>ID token not configured:</strong> Ensure the app token configuration includes <code style="font-family: monospace; background: #eee; padding: 2px 4px;">roles</code> in the ID token claims</li>
+                    </ol>
+                {% else %}
+                    <p><strong class="success">✓ Your Entra token contains roles</strong></p>
+                    <p>
+                        {% if diagnostics.is_admin %}
+                            You are authenticated as an <strong>administrator</strong>.
+                        {% else %}
+                            You are authenticated as a <strong>regular user</strong>.
+                        {% endif %}
+                    </p>
+                {% endif %}
+                
+                <div class="code-block" style="margin-top: 15px;">
+                    <strong>Setup Checklist:</strong><br>
+                    ☐ Define roles in app registration manifest<br>
+                    ☐ Assign users/groups in Enterprise Applications<br>
+                    ☐ Ensure ID token includes roles claim<br>
+                    ☐ Test with new SSO login/token
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Local Auth Info -->
+        {% if diagnostics.auth_provider == 'local' and diagnostics.local_info %}
+        <div class="section">
+            <h2>Local Authentication</h2>
+            <div class="info-item">
+                <div class="info-label">Status</div>
+                <div class="info-value">{{ diagnostics.local_info.status }}</div>
+            </div>
+            <div class="info-item" style="margin-top: 10px;">
+                <div class="info-label">Note</div>
+                <div class="info-value">{{ diagnostics.local_info.note }}</div>
+            </div>
+            <div class="help-section">
+                <h3>📝 Local User Management</h3>
+                <p>To manage admin privileges for local users, use the <a href="{{ url_for('roles') }}" style="color: #0066cc; font-weight: 500;">Roles Management</a> page.</p>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- General Help -->
+        <div class="section">
+            <h2>About This Page</h2>
+            <p style="color: #555; line-height: 1.6; margin-bottom: 10px;">
+                This diagnostics page shows your current authentication session information and what roles your Entra token contains. 
+                It's useful for debugging SSO issues before they cause access denial errors.
+            </p>
+            <p style="color: #555; line-height: 1.6;">
+                <strong>Tip:</strong> If you see "No roles found in token" but expect roles, try logging out and logging in again with a fresh token. 
+                Sometimes changes in Entra assignments take a few minutes to propagate.
+            </p>
+        </div>
+
+    </div>
+</body>
+</html>

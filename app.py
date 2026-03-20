@@ -1,11 +1,18 @@
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, abort
 import os
+import secrets
 import threading
 import smtplib
+from urllib.parse import urlencode
 from email.mime.text import MIMEText
 from flask_sqlalchemy import SQLAlchemy
+import requests
+import jwt
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 from datetime import datetime, timedelta
 from functools import wraps
@@ -134,6 +141,42 @@ def is_admin_username(username):
     return normalized in get_admin_usernames() or is_admin_in_db(normalized)
 
 
+ENTRA_APP_ADMIN_ROLE_VALUES = {"app_admin"}
+ENTRA_APP_USER_ROLE_VALUES = {"app_users", "msiam_access", "user"}
+
+
+def resolve_entra_permissions(claims):
+    role_values = claims.get("roles", [])
+    if isinstance(role_values, str):
+        role_values = [role_values]
+    if not isinstance(role_values, list):
+        role_values = []
+
+    normalized_roles = {str(v).strip().lower() for v in role_values if str(v).strip()}
+    admin_matches = normalized_roles & ENTRA_APP_ADMIN_ROLE_VALUES
+    user_matches = normalized_roles & ENTRA_APP_USER_ROLE_VALUES
+
+    # If no roles are emitted, treat the user as a standard app user and rely on
+    # Enterprise Application assignment (Users and groups + assignment required).
+    if not normalized_roles:
+        return {
+            "is_admin": False,
+            "is_user": True,
+            "matched_values": [],
+            "source": "assignment",
+        }
+
+    is_admin = bool(admin_matches)
+    is_user = bool(user_matches) or is_admin
+
+    return {
+        "is_admin": is_admin,
+        "is_user": is_user,
+        "matched_values": sorted(admin_matches | user_matches),
+        "source": "roles",
+    }
+
+
 def admin_only(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -143,11 +186,94 @@ def admin_only(f):
     return wrapper
 
 
+def get_entra_authority():
+    tenant_id = os.getenv("ENTRA_TENANT_ID", "").strip()
+    authority = os.getenv("ENTRA_AUTHORITY", "").strip()
+    if authority:
+        return authority.rstrip("/")
+    if tenant_id:
+        return f"https://login.microsoftonline.com/{tenant_id}"
+    return None
+
+
+def is_entra_sso_enabled():
+    return bool(
+        os.getenv("ENTRA_CLIENT_ID")
+        and os.getenv("ENTRA_CLIENT_SECRET")
+        and get_entra_authority()
+    )
+
+
+def get_entra_redirect_uri():
+    configured = os.getenv("ENTRA_REDIRECT_URI", "").strip()
+    if configured:
+        return configured
+    return url_for("entra_auth_callback", _external=True)
+
+
+def get_entra_openid_configuration():
+    authority = get_entra_authority()
+    if not authority:
+        raise ValueError("ENTRA authority is not configured.")
+
+    discovery_url = f"{authority}/v2.0/.well-known/openid-configuration"
+    response = requests.get(discovery_url, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def validate_entra_id_token(id_token):
+    openid_config = get_entra_openid_configuration()
+    client_id = os.getenv("ENTRA_CLIENT_ID", "").strip()
+    if not client_id:
+        raise ValueError("ENTRA_CLIENT_ID environment variable is not set.")
+
+    jwk_client = jwt.PyJWKClient(openid_config["jwks_uri"])
+    signing_key = jwk_client.get_signing_key_from_jwt(id_token)
+    return jwt.decode(
+        id_token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=client_id,
+        issuer=openid_config["issuer"],
+    )
+
+
+def extract_entra_username(claims):
+    return (
+        claims.get("preferred_username")
+        or claims.get("email")
+        or claims.get("upn")
+        or claims.get("name")
+    )
+
+
+def get_entra_state_serializer():
+    return URLSafeTimedSerializer(app.secret_key, salt="entra-oidc-state")
+
+
+def build_entra_state(nonce):
+    serializer = get_entra_state_serializer()
+    payload = {
+        "csrf": secrets.token_urlsafe(16),
+        "nonce": nonce,
+    }
+    return serializer.dumps(payload)
+
+
+def parse_entra_state(state_token, max_age_seconds=600):
+    serializer = get_entra_state_serializer()
+    return serializer.loads(state_token, max_age=max_age_seconds)
+
+
 @app.before_request
 def sync_admin_flag():
     username = session.get("user")
     if username:
-        session["is_admin"] = is_admin_username(username)
+        if session.get("auth_provider") == "entra":
+            session["is_admin"] = bool(session.get("entra_is_admin", False))
+        else:
+            session["is_admin"] = is_admin_username(username)
 
 
 # To ignore warnings of openxyl, excel sheet weird format
@@ -512,6 +638,7 @@ def login():
                 else:
                     session['user'] = username
                     session['is_admin'] = is_admin_username(username)
+                    session['auth_provider'] = 'local'
                     session.permanent = True 
                     log = Metric(metric_name=username, value=0)
                     db.session.add(log)
@@ -539,6 +666,7 @@ def login():
                     session.pop('pending_user')
                     session['user'] = username
                     session['is_admin'] = is_admin_username(username)
+                    session['auth_provider'] = 'local'
                     session.permanent = True
 
                     log = Metric(metric_name=f"{username}_password_changed", value=1)
@@ -546,7 +674,161 @@ def login():
                     db.session.commit()
                     return redirect(url_for('index'))
 
-    return render_template('login.html', step=step, error=error)
+    return render_template('login.html', step=step, error=error, sso_enabled=is_entra_sso_enabled())
+
+
+@app.route('/auth/entra/login')
+def entra_login():
+    if not is_entra_sso_enabled():
+        flash("SSO is not configured. Contact an administrator.", "error")
+        return redirect(url_for('login'))
+
+    nonce = secrets.token_urlsafe(24)
+    state = build_entra_state(nonce)
+
+    try:
+        openid_config = get_entra_openid_configuration()
+    except Exception:
+        flash("Unable to start Microsoft SSO at the moment.", "error")
+        return redirect(url_for('login'))
+
+    params = {
+        'client_id': os.getenv('ENTRA_CLIENT_ID', '').strip(),
+        'response_type': 'code',
+        'redirect_uri': get_entra_redirect_uri(),
+        'response_mode': 'query',
+        'scope': 'openid profile email',
+        'state': state,
+        'nonce': nonce,
+    }
+    authorize_url = f"{openid_config['authorization_endpoint']}?{urlencode(params)}"
+    return redirect(authorize_url)
+
+
+@app.route('/auth/entra/callback')
+def entra_auth_callback():
+    if not is_entra_sso_enabled():
+        flash("SSO is not configured. Contact an administrator.", "error")
+        return redirect(url_for('login'))
+
+    returned_state = request.args.get('state')
+    if not returned_state:
+        flash("Invalid SSO state. Please try logging in again.", "error")
+        return redirect(url_for('login'))
+
+    try:
+        state_payload = parse_entra_state(returned_state)
+        expected_nonce = state_payload.get('nonce')
+        if not expected_nonce:
+            raise ValueError("Missing nonce in SSO state payload.")
+    except (BadSignature, SignatureExpired, ValueError):
+        flash("Invalid or expired SSO state. Please try logging in again.", "error")
+        return redirect(url_for('login'))
+
+    if request.args.get('error'):
+        details = request.args.get('error_description', 'Microsoft sign-in was canceled or failed.')
+        flash(details, "error")
+        return redirect(url_for('login'))
+
+    code = request.args.get('code')
+    if not code:
+        flash("Microsoft sign-in did not return an authorization code.", "error")
+        return redirect(url_for('login'))
+
+    try:
+        openid_config = get_entra_openid_configuration()
+        token_response = requests.post(
+            openid_config['token_endpoint'],
+            data={
+                'client_id': os.getenv('ENTRA_CLIENT_ID', '').strip(),
+                'client_secret': os.getenv('ENTRA_CLIENT_SECRET', '').strip(),
+                'code': code,
+                'redirect_uri': get_entra_redirect_uri(),
+                'grant_type': 'authorization_code',
+            },
+            timeout=10,
+        )
+        token_response.raise_for_status()
+        token_payload = token_response.json()
+        id_token = token_payload.get('id_token')
+        if not id_token:
+            raise ValueError('ID token was not returned by Entra ID.')
+
+        claims = validate_entra_id_token(id_token)
+        if claims.get('nonce') != expected_nonce:
+            raise ValueError('Invalid SSO nonce in ID token.')
+
+        username = extract_entra_username(claims)
+        if not username:
+            raise ValueError('Unable to determine username from Entra ID token.')
+
+        username = username.strip().lower()
+        permissions = resolve_entra_permissions(claims)
+
+        if not permissions["is_user"]:
+            flash(
+                "Access denied. Assign the user/group in Entra Enterprise Applications Users and groups "
+                "and map app roles (app_users/app_admin).",
+                "error",
+            )
+            return redirect(url_for('login'))
+
+        session['user'] = username
+        session['entra_is_user'] = True
+        session['entra_is_admin'] = permissions['is_admin']
+        session['entra_matched_values'] = permissions['matched_values']
+        session['is_admin'] = permissions['is_admin']
+        session['auth_provider'] = 'entra'
+        session.permanent = True
+
+        log = Metric(metric_name=f"{username}_entra_login", value=1)
+        db.session.add(log)
+        db.session.commit()
+    except Exception:
+        flash("Microsoft sign-in failed. Please try again or use local login.", "error")
+        return redirect(url_for('login'))
+
+    return redirect(url_for('index'))
+
+
+@app.route("/auth/diagnostics")
+@admin_only
+def auth_diagnostics():
+    """
+    Admin-only endpoint to display authentication and authorization diagnostics.
+    Shows current session info, resolved permissions, and token claim details for debugging.
+    Returns JSON or HTML based on Accept header.
+    """
+    auth_provider = session.get('auth_provider')
+    username = session.get('user', 'Not logged in')
+    
+    diagnostics = {
+        'username': username,
+        'auth_provider': auth_provider,
+        'is_admin': session.get('is_admin', False),
+        'is_logged_in': 'user' in session,
+    }
+    
+    if auth_provider == 'entra':
+        diagnostics['entra_info'] = {
+            'entra_is_user': session.get('entra_is_user', False),
+            'entra_is_admin': session.get('entra_is_admin', False),
+            'matched_role_values': session.get('entra_matched_values', []),
+            'expected_admin_roles': list(ENTRA_APP_ADMIN_ROLE_VALUES),
+            'expected_user_roles': list(ENTRA_APP_USER_ROLE_VALUES),
+        }
+    
+    if auth_provider == 'local':
+        diagnostics['local_info'] = {
+            'status': 'Local authentication active',
+            'note': 'For local users, roles are managed via the /roles admin page'
+        }
+    
+    # Support both JSON and HTML rendering
+    if request.accept_mimetypes.get('application/json', 0) > request.accept_mimetypes.get('text/html', 0):
+        return jsonify(diagnostics)
+    
+    return render_template('auth_diagnostics.html', diagnostics=diagnostics)
 
 
 @app.route("/survey", methods=["GET", "POST"])
@@ -583,8 +865,24 @@ def survey_results():
 
 @app.route('/logout')
 def logout():
+    auth_provider = session.get('auth_provider')
     session.pop('user', None)
     session.pop('is_admin', None)
+    session.pop('auth_provider', None)
+    session.pop('entra_is_user', None)
+    session.pop('entra_is_admin', None)
+    session.pop('entra_matched_values', None)
+
+    if auth_provider == 'entra' and is_entra_sso_enabled():
+        try:
+            openid_config = get_entra_openid_configuration()
+            end_session_endpoint = openid_config.get('end_session_endpoint')
+            if end_session_endpoint:
+                logout_url = f"{end_session_endpoint}?{urlencode({'post_logout_redirect_uri': url_for('login', _external=True)})}"
+                return redirect(logout_url)
+        except Exception:
+            pass
+
     return redirect(url_for('login'))
 
 
