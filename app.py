@@ -1,4 +1,6 @@
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, flash, abort
 import os
@@ -237,17 +239,19 @@ def load_excel_data():
   # Calculate total savings for each vessel
   vessel_devices['Total Savings'] = vessel_devices['Savings/year (fuel efficiency)'].fillna(0) + vessel_devices['Savings/year (Maitenance)'].fillna(0) + vessel_devices['Co2 savings ton/year'].fillna(0)
 
-  # Create chart file used by the app
-  top_vessels = vessel_devices.groupby('Vessel Name/ ID')['Total Savings'].sum().nlargest(10).reset_index()
-  plt.figure(figsize=(10, 6))
-  plt.bar(top_vessels['Vessel Name/ ID'], top_vessels['Total Savings'], color='blue')
-  plt.xlabel('Vessel Name')
-  plt.ylabel('Total Savings')
-  plt.title('Top 10 Vessels with Best Performance')
-  plt.xticks(rotation=45)
-  plt.tight_layout()
-  plt.savefig('static/top_vessels_chart.png')
-  plt.close()
+  # Generate chart file only if missing to keep first load lighter.
+  chart_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'top_vessels_chart.png')
+  if not os.path.exists(chart_path):
+    top_vessels = vessel_devices.groupby('Vessel Name/ ID')['Total Savings'].sum().nlargest(10).reset_index()
+    plt.figure(figsize=(10, 6))
+    plt.bar(top_vessels['Vessel Name/ ID'], top_vessels['Total Savings'], color='blue')
+    plt.xlabel('Vessel Name')
+    plt.ylabel('Total Savings')
+    plt.title('Top 10 Vessels with Best Performance')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(chart_path)
+    plt.close()
 
   # --- Top 10 Vessel Savings (Summary!A99:B108) ---
   vessels10r = summary_raw.loc[98:107, 0].dropna().astype(str).tolist()
