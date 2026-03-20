@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Survey Results</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background: #f9f9f9; }
+    .survey-container { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); max-width: 900px; margin: auto; }
+    h2 { text-align: center; color: var(--brand-purple, #6a1b9a); }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: var(--brand-purple, #6a1b9a); color: white; }
+    tr:nth-child(even) { background: #f3f3f3; }
+  </style>
+</head>
+<body>
+  <div class="survey-container">
+    <h2>Survey Results</h2>
+    <table>
+      <tr><th>Date</th><th>Vessel</th><th>Responses</th></tr>
+      {% for s in surveys %}
+      <tr>
+        <td>{{ s.date }}</td>
+        <td>{{ s.vessel_name }}</td>
+        <td>{% for k, v in s.responses.items() %}<b>{{ k }}</b>: {{ v }}<br>{% endfor %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</body>
+</html>

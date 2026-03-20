@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Vessel Survey</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background: #f9f9f9; }
+    .survey-container { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); max-width: 700px; margin: auto; }
+    h2 { text-align: center; color: var(--brand-purple, #6a1b9a); }
+    select, button { margin: 5px 0; padding: 8px; font-size: 14px; border-radius: 6px; }
+    .device-row { margin-bottom: 12px; }
+    button { background: var(--brand-purple, #6a1b9a); color: white; border: none; cursor: pointer; width: 100%; padding: 12px; font-size: 16px; }
+    button:hover { background: var(--brand-green, #2e7d32); }
+  </style>
+</head>
+<body>
+  <div class="survey-container">
+    <h2>Vessel Survey</h2>
+    <form method="post">
+      <label for="vessel">Select Vessel:</label>
+      <select name="vessel" required>
+        {% for v in vessels %}
+        <option value="{{ v }}">{{ v }}</option>
+        {% endfor %}
+      </select>
+      <hr>
+      <h3>Devices</h3>
+      {% for device in devices %}
+      <div class="device-row">
+        <label>{{ device }}:</label>
+        <select name="{{ device }}" required>
+          <option value="">--Select--</option>
+          <option value="Done">Done</option>
+          <option value="No Need">No Need</option>
+          <option value="In Progress">In Progress</option>
+          <option value="Not Installed">Not Installed</option>
+        </select>
+      </div>
+      {% endfor %}
+      <button type="submit">Submit Survey</button>
+    </form>
+  </div>
+</body>
+</html>

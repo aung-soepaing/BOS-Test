@@ -1,0 +1,43 @@
+<div class="container section content">
+  <h2>Users and roles</h2>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <p><strong>{{ message }}</strong></p>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+    <thead><tr style="background:#f0f0f0;"><th>Users</th><th>Roles</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for m in carnet %}
+      <tr>
+        <td>{{ m.username }}</td>
+        <td>
+          {% if m.username|lower in admin_usernames %}
+            Administrator
+          {% else %}
+            User
+          {% endif %}
+        </td>
+        <td>
+          {% if m.username|lower not in admin_usernames %}
+            <form method="post" action="{{ url_for('promote_user_to_admin') }}" style="margin:0;">
+              <input type="hidden" name="username" value="{{ m.username }}">
+              <button type="submit">Promote to Admin</button>
+            </form>
+          {% elif m.username|lower == break_glass_admin %}
+            <span>Break-Glass Admin</span>
+          {% else %}
+            <form method="post" action="{{ url_for('demote_user_from_admin') }}" style="margin:0;">
+              <input type="hidden" name="username" value="{{ m.username }}">
+              <button type="submit">Demote from Admin</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><a href="{{ url_for('admin_dashboard') }}">Back to Admin Dashboard</a></p>
+</div>

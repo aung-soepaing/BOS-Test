@@ -1,0 +1,12 @@
+<div class="container section content">
+  <h2>Device added Log</h2>
+  <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+    <thead><tr style="background:#f0f0f0;"><th>Action</th><th>Vessel</th></tr></thead>
+    <tbody>
+      {% for m in devlogL %}
+      <tr><td>{{ m.action }}</td><td>{{ m.vessel_name }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><a href="{{ url_for('admin_dashboard') }}">Back to Admin Dashboard</a></p>
+</div>

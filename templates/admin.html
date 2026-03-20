@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Admin Dashboard - SustainaBOS</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; margin: 0; padding: 0; }
+        .container { max-width: 1000px; margin: 40px auto; padding: 20px; }
+        h2 { text-align: center; margin-bottom: 30px; color: #333; }
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; }
+        .feature-card {
+            background: white; padding: 20px; border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s; text-decoration: none; color: inherit;
+        }
+        .feature-card:hover { transform: translateY(-4px); box-shadow: 0 8px 20px rgba(0,0,0,0.15); }
+        .feature-card .media { font-size: 32px; margin-bottom: 12px; color: #6a1b9a; }
+        .feature-card h4 { margin: 10px 0 8px; color: #222; }
+        .feature-card p { font-size: 14px; color: #555; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Admin Dashboard</h2>
+        <div class="card-grid">
+            <a href="{{ url_for('survey_results') }}" class="feature-card">
+                <div class="media">📋</div><h4>Survey Results</h4><p>View all vessel surveys.</p>
+            </a>
+            <a href="{{ url_for('chat') }}" class="feature-card">
+                <div class="media">💬</div><h4>Chat Log</h4><p>See all chat messages.</p>
+            </a>
+            <a href="{{ url_for('metrics') }}" class="feature-card">
+                <div class="media">📊</div><h4>Metrics</h4><p>Track technical KPIs and logs.</p>
+            </a>
+            <a href="{{ url_for('admin_add_user') }}" class="feature-card">
+                <div class="media">➕</div><h4>Create User</h4><p>Add new application users.</p>
+            </a>
+            <a href="{{ url_for('roles') }}" class="feature-card">
+                <div class="media">🔑</div><h4>User Roles</h4><p>See all users and roles.</p>
+            </a>
+            <a href="{{ url_for('devlog') }}" class="feature-card">
+                <div class="media">🔥</div><h4>Devices added</h4><p>See all added Devices.</p>
+            </a>
+            <a href="{{ url_for('spinergie') }}" class="feature-card">
+                <div class="media">📄</div><h4>Spinergie POC</h4><p>Sucess criterias and infos.</p>
+            </a>
+            <a href="{{ url_for('admin_reset_password') }}" class="feature-card">
+                <div class="media">🔄</div><h4>Reset Password</h4><p>Reset a user's password to default.</p>
+            </a>
+        </div>
+        <div style="text-align: center; margin-top: 30px;">
+            <a href="{{ url_for('index') }}" style="text-decoration: none; color: #6a1b9a; font-weight: bold;">← Back to Home</a>
+        </div>
+    </div>
+</body>
+</html>
