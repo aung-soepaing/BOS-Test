@@ -95,76 +95,27 @@
                     <div class="info-label">Entra Admin Status</div>
                     <div class="info-value">
                         <span class="status-badge {% if diagnostics.entra_info.entra_is_admin %}status-true{% else %}status-false{% endif %}">
-                            {% if diagnostics.entra_info.entra_is_admin %}✓ Admin Role{% else %}✗ User Role{% endif %}
+                            {% if diagnostics.entra_info.entra_is_admin %}✓ Admin{% else %}✗ Not Admin{% endif %}
                         </span>
                     </div>
                 </div>
             </div>
 
-            <!-- Token Roles Claim -->
             <div style="margin-top: 20px;">
-                <strong style="color: #333;">Token Roles Claim (matched):</strong>
-                <ul class="role-list">
-                    {% if diagnostics.entra_info.matched_role_values %}
-                        {% for role in diagnostics.entra_info.matched_role_values %}
-                            <li>{{ role }}</li>
-                        {% endfor %}
-                    {% else %}
-                        <li class="empty-list">No roles found in token</li>
-                    {% endif %}
-                </ul>
-            </div>
-
-            <!-- Expected Roles Configuration -->
-            <div style="margin-top: 20px;">
-                <strong style="color: #333;">Configuration (hardcoded role values):</strong>
-                
-                <div style="margin-top: 10px; padding: 10px; background: #f0f4ff; border-radius: 5px;">
-                    <strong style="color: #1565c0; font-size: 13px;">Admin Roles Expected:</strong>
-                    <ul class="role-list">
-                        {% for role in diagnostics.entra_info.expected_admin_roles %}
-                            <li>{{ role }}</li>
-                        {% endfor %}
-                    </ul>
-                </div>
-
-                <div style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 5px;">
-                    <strong style="color: #1565c0; font-size: 13px;">User Roles Expected:</strong>
-                    <ul class="role-list">
-                        {% for role in diagnostics.entra_info.expected_user_roles %}
-                            <li>{{ role }}</li>
-                        {% endfor %}
-                    </ul>
-                </div>
+                <strong style="color: #333;">Authorization Model:</strong>
+                <div class="code-block">{{ diagnostics.entra_info.assignment_model }}</div>
             </div>
 
             <!-- Help Section for Entra -->
             <div class="help-section">
                 <h3>🔍 Troubleshooting Entra SSO</h3>
-                {% if not diagnostics.entra_info.matched_role_values %}
-                    <p><strong class="error">⚠ Issue: No roles found in your Entra token</strong></p>
-                    <p>This typically means one of the following:</p>
-                    <ol style="margin-left: 20px;">
-                        <li><strong>App roles not defined:</strong> In your app registration manifest, add the app roles: <code style="font-family: monospace; background: #eee; padding: 2px 4px;">app_users</code> and <code style="font-family: monospace; background: #eee; padding: 2px 4px;">app_admin</code></li>
-                        <li><strong>User not assigned:</strong> In Enterprise Applications, go to "Users and groups" and assign this user or their group to a role</li>
-                        <li><strong>ID token not configured:</strong> Ensure the app token configuration includes <code style="font-family: monospace; background: #eee; padding: 2px 4px;">roles</code> in the ID token claims</li>
-                    </ol>
-                {% else %}
-                    <p><strong class="success">✓ Your Entra token contains roles</strong></p>
-                    <p>
-                        {% if diagnostics.is_admin %}
-                            You are authenticated as an <strong>administrator</strong>.
-                        {% else %}
-                            You are authenticated as a <strong>regular user</strong>.
-                        {% endif %}
-                    </p>
-                {% endif %}
+                <p><strong class="success">✓ This app uses Enterprise Application assignment only</strong></p>
+                <p>If an unassigned user can still sign in, check that <strong>Assignment required</strong> is set to <strong>Yes</strong> in Enterprise Applications for this app.</p>
                 
                 <div class="code-block" style="margin-top: 15px;">
                     <strong>Setup Checklist:</strong><br>
-                    ☐ Define roles in app registration manifest<br>
-                    ☐ Assign users/groups in Enterprise Applications<br>
-                    ☐ Ensure ID token includes roles claim<br>
+                    ☐ Set Assignment required = Yes in Enterprise Applications<br>
+                    ☐ Assign approved users/groups in Enterprise Applications<br>
                     ☐ Test with new SSO login/token
                 </div>
             </div>
@@ -194,11 +145,11 @@
         <div class="section">
             <h2>About This Page</h2>
             <p style="color: #555; line-height: 1.6; margin-bottom: 10px;">
-                This diagnostics page shows your current authentication session information and what roles your Entra token contains. 
+                This diagnostics page shows your current authentication session information for local and Entra sign-ins. 
                 It's useful for debugging SSO issues before they cause access denial errors.
             </p>
             <p style="color: #555; line-height: 1.6;">
-                <strong>Tip:</strong> If you see "No roles found in token" but expect roles, try logging out and logging in again with a fresh token. 
+                <strong>Tip:</strong> If assignment changes were made in Entra, try logging out and logging in again with a fresh token. 
                 Sometimes changes in Entra assignments take a few minutes to propagate.
             </p>
         </div>

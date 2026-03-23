@@ -9,7 +9,7 @@ import threading
 import smtplib
 from urllib.parse import urlencode
 from email.mime.text import MIMEText
-from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 import requests
 import jwt
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
@@ -17,14 +17,38 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from datetime import datetime, timedelta
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from dotenv import load_dotenv
+from extensions import db
+from models import Survey, Metric, ChatMessage, DeviceLog, User2, AdminUser
+
 load_dotenv()
+
+
+def env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
 
 # Create a Flask app
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-app.permanent_session_lifetime = timedelta(minutes=30)
+APP_ENV = os.getenv("APP_ENV", os.getenv("FLASK_ENV", "production")).strip().lower()
+IS_PRODUCTION = APP_ENV == "production"
+FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "").strip()
+if not FLASK_SECRET_KEY and IS_PRODUCTION:
+    raise ValueError("FLASK_SECRET_KEY must be set in production.")
+app.secret_key = FLASK_SECRET_KEY or "dev-only-change-me"
+
+session_timeout_minutes = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(minutes=session_timeout_minutes)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = os.getenv("SESSION_COOKIE_SAMESITE", "Lax")
+app.config["SESSION_COOKIE_SECURE"] = env_bool("SESSION_COOKIE_SECURE", IS_PRODUCTION)
 
 
 # Database connection (Render provides DATABASE_URL in env vars)
@@ -43,47 +67,7 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     }
 }
 
-db = SQLAlchemy(app)
-
-# --- models ---
-class Survey(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    vessel_name = db.Column(db.String(100))
-    date = db.Column(db.Date)
-    responses = db.Column(db.JSON)
-
-class Metric(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    metric_name = db.Column(db.String(100))
-    value = db.Column(db.Float)
-    timestamp = db.Column(db.DateTime, default=db.func.now())
-
-class ChatMessage(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user = db.Column(db.String(50))
-    message = db.Column(db.Text)
-    timestamp = db.Column(db.DateTime, default=db.func.now())
-
-class DeviceLog(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    action = db.Column(db.String(100))
-    vessel_name = db.Column(db.String(100))
-    timestamp = db.Column(db.DateTime, default=db.func.now())
-
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128), nullable=False)
-
-class User2(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), unique=True, nullable=False)
-    password_hash = db.Column(db.Text, nullable=False)
-
-
-class AdminUser(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), unique=True, nullable=False)
+db.init_app(app)
 
 
 # --- auth and access helpers ---
@@ -139,42 +123,6 @@ def is_admin_username(username):
         return False
     normalized = username.strip().lower()
     return normalized in get_admin_usernames() or is_admin_in_db(normalized)
-
-
-ENTRA_APP_ADMIN_ROLE_VALUES = {"app_admin"}
-ENTRA_APP_USER_ROLE_VALUES = {"app_users", "msiam_access", "user"}
-
-
-def resolve_entra_permissions(claims):
-    role_values = claims.get("roles", [])
-    if isinstance(role_values, str):
-        role_values = [role_values]
-    if not isinstance(role_values, list):
-        role_values = []
-
-    normalized_roles = {str(v).strip().lower() for v in role_values if str(v).strip()}
-    admin_matches = normalized_roles & ENTRA_APP_ADMIN_ROLE_VALUES
-    user_matches = normalized_roles & ENTRA_APP_USER_ROLE_VALUES
-
-    # If no roles are emitted, treat the user as a standard app user and rely on
-    # Enterprise Application assignment (Users and groups + assignment required).
-    if not normalized_roles:
-        return {
-            "is_admin": False,
-            "is_user": True,
-            "matched_values": [],
-            "source": "assignment",
-        }
-
-    is_admin = bool(admin_matches)
-    is_user = bool(user_matches) or is_admin
-
-    return {
-        "is_admin": is_admin,
-        "is_user": is_user,
-        "matched_values": sorted(admin_matches | user_matches),
-        "source": "roles",
-    }
 
 
 def admin_only(f):
@@ -255,7 +203,6 @@ def get_entra_state_serializer():
 def build_entra_state(nonce):
     serializer = get_entra_state_serializer()
     payload = {
-        "csrf": secrets.token_urlsafe(16),
         "nonce": nonce,
     }
     return serializer.dumps(payload)
@@ -276,13 +223,34 @@ def sync_admin_flag():
             session["is_admin"] = is_admin_username(username)
 
 
+@app.after_request
+def apply_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if request.is_secure:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+@app.route("/healthz")
+def healthz():
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/readyz")
+def readyz():
+    try:
+        db.session.execute(text("SELECT 1"))
+        return jsonify({"status": "ready"}), 200
+    except Exception:
+        app.logger.exception("Readiness check failed")
+        return jsonify({"status": "not_ready"}), 503
+
+
 # To ignore warnings of openxyl, excel sheet weird format
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
-
-# For the password later
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-now")  # set a real value in Render later
-
 
 # --- bootstrap / seed helpers ---
 def seed_users():
@@ -329,7 +297,6 @@ donutdev = {
 }
 
 _excel_data_loaded = False
-_excel_data_error = None
 _excel_data_lock = threading.Lock()
 
 
@@ -427,19 +394,17 @@ def load_excel_data():
 
 
 def ensure_excel_data_loaded():
-  global _excel_data_loaded, _excel_data_error
-  if _excel_data_loaded:
-    return
-  with _excel_data_lock:
-    if _excel_data_loaded:
-      return
-    try:
-      load_excel_data()
-      _excel_data_loaded = True
-      _excel_data_error = None
-    except Exception as exc:
-      _excel_data_error = str(exc)
-      raise
+        global _excel_data_loaded
+        if _excel_data_loaded:
+                return
+        with _excel_data_lock:
+                if _excel_data_loaded:
+                        return
+                try:
+                        load_excel_data()
+                        _excel_data_loaded = True
+                except Exception:
+                        raise
 
 def get_vessel_summary(vessel_name):
     ensure_excel_data_loaded()
@@ -763,21 +728,10 @@ def entra_auth_callback():
             raise ValueError('Unable to determine username from Entra ID token.')
 
         username = username.strip().lower()
-        permissions = resolve_entra_permissions(claims)
-
-        if not permissions["is_user"]:
-            flash(
-                "Access denied. Assign the user/group in Entra Enterprise Applications Users and groups "
-                "and map app roles (app_users/app_admin).",
-                "error",
-            )
-            return redirect(url_for('login'))
-
         session['user'] = username
         session['entra_is_user'] = True
-        session['entra_is_admin'] = permissions['is_admin']
-        session['entra_matched_values'] = permissions['matched_values']
-        session['is_admin'] = permissions['is_admin']
+        session['entra_is_admin'] = False
+        session['is_admin'] = False
         session['auth_provider'] = 'entra'
         session.permanent = True
 
@@ -785,6 +739,7 @@ def entra_auth_callback():
         db.session.add(log)
         db.session.commit()
     except Exception:
+        app.logger.exception("Entra callback failed")
         flash("Microsoft sign-in failed. Please try again or use local login.", "error")
         return redirect(url_for('login'))
 
@@ -813,9 +768,7 @@ def auth_diagnostics():
         diagnostics['entra_info'] = {
             'entra_is_user': session.get('entra_is_user', False),
             'entra_is_admin': session.get('entra_is_admin', False),
-            'matched_role_values': session.get('entra_matched_values', []),
-            'expected_admin_roles': list(ENTRA_APP_ADMIN_ROLE_VALUES),
-            'expected_user_roles': list(ENTRA_APP_USER_ROLE_VALUES),
+            'assignment_model': 'Enterprise Application assignment only',
         }
     
     if auth_provider == 'local':
@@ -871,7 +824,6 @@ def logout():
     session.pop('auth_provider', None)
     session.pop('entra_is_user', None)
     session.pop('entra_is_admin', None)
-    session.pop('entra_matched_values', None)
 
     if auth_provider == 'entra' and is_entra_sso_enabled():
         try:
@@ -1067,14 +1019,19 @@ def chat():
 
 
 @app.route('/notify_new_device', methods=['POST'])
+@admin_only
 def notify_new_device():
     data = request.json
     vessel = data.get("vessel")
     device = data.get("device")
 
     # Build the email
-    sender = os.getenv("SMTP_USER")  # your email (set as env variable)
-    recipient = "axel.faurax@britoil.com.sg"
+    sender = os.getenv("SMTP_USER", "").strip()
+    recipient = os.getenv("NOTIFICATION_EMAIL", "").strip()
+    if not sender or not recipient:
+        app.logger.error("Missing SMTP_USER or NOTIFICATION_EMAIL configuration")
+        return jsonify({"status": "error", "message": "Notification settings are not configured."}), 503
+
     msg = MIMEText(f"🚢 New device added!\n\nVessel: {vessel}\nDevice: {device}")
     msg['Subject'] = "New Device Notification"
     msg['From'] = sender
@@ -1093,11 +1050,15 @@ def notify_new_device():
             server.sendmail(sender, [recipient], msg.as_string())
 
         return jsonify({"status": "success", "message": "Notification sent"}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception:
+        app.logger.exception("Failed to send notification email")
+        return jsonify({"status": "error", "message": "Notification send failed."}), 500
 
 if __name__ == '__main__':
     with app.app_context():
       db.create_all()
       seed_users()
-    app.run(debug=True)
+    debug_mode = env_bool("FLASK_DEBUG", False) and not IS_PRODUCTION
+    host = os.getenv("FLASK_RUN_HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "5000"))
+    app.run(host=host, port=port, debug=debug_mode)
