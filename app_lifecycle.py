@@ -1,4 +1,5 @@
 from flask import request, session
+from auth_core import is_sso_user_admin
 
 def register_lifecycle_hooks(app, is_admin_username):
     @app.before_request
@@ -6,7 +7,9 @@ def register_lifecycle_hooks(app, is_admin_username):
         username = session.get("user")
         if username:
             if session.get("auth_provider") == "entra":
-                session["is_admin"] = bool(session.get("entra_is_admin", False))
+                # Re-check SSO user role from database to reflect role changes immediately
+                session["is_admin"] = is_sso_user_admin(username)
+                session["entra_is_admin"] = session["is_admin"]
             else:
                 session["is_admin"] = is_admin_username(username)
 

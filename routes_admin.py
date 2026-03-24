@@ -1,7 +1,7 @@
 from flask import flash, redirect, render_template, request, url_for
 from werkzeug.security import generate_password_hash
 from extensions import db
-from models import AdminUser, DeviceLog, Metric, User2
+from models import AdminUser, DeviceLog, Metric, SSOUserRole, User2
 
 
 def register_admin_routes(
@@ -76,6 +76,66 @@ def register_admin_routes(
         flash(f"User '{username}' demoted to normal user.", "success")
 
         return redirect(url_for("roles"))
+
+    @app.route("/admin/sso-roles")
+    @admin_only
+    def sso_roles():
+        """Display all SSO users and their admin role assignments."""
+        sso_users = SSOUserRole.query.order_by(SSOUserRole.username.desc()).all()
+        return render_template(
+            "admin_sso_roles.html",
+            sso_users=sso_users,
+        )
+
+    @app.route("/admin/sso-roles/promote", methods=["POST"])
+    @admin_only
+    def promote_sso_user_to_admin():
+        """Promote an SSO user to administrator."""
+        username = request.form.get("username", "").strip()
+        if not username:
+            flash("Username is required.", "error")
+            return redirect(url_for("sso_roles"))
+
+        normalized = username.lower()
+        user_role = SSOUserRole.query.filter_by(username=normalized).first()
+        if not user_role:
+            user_role = SSOUserRole(username=normalized, is_admin=True)
+            db.session.add(user_role)
+            db.session.commit()
+            flash(f"SSO user '{username}' promoted to Administrator.", "success")
+        elif user_role.is_admin:
+            flash(f"SSO user '{username}' is already an Administrator.", "info")
+        else:
+            user_role.is_admin = True
+            db.session.commit()
+            flash(f"SSO user '{username}' promoted to Administrator.", "success")
+
+        return redirect(url_for("sso_roles"))
+
+    @app.route("/admin/sso-roles/demote", methods=["POST"])
+    @admin_only
+    def demote_sso_user_from_admin():
+        """Demote an SSO user from administrator."""
+        username = request.form.get("username", "").strip()
+        if not username:
+            flash("Username is required.", "error")
+            return redirect(url_for("sso_roles"))
+
+        normalized = username.lower()
+        user_role = SSOUserRole.query.filter_by(username=normalized).first()
+        if not user_role:
+            flash(f"SSO user '{username}' not found.", "error")
+            return redirect(url_for("sso_roles"))
+
+        if not user_role.is_admin:
+            flash(f"SSO user '{username}' is not an Administrator.", "info")
+            return redirect(url_for("sso_roles"))
+
+        user_role.is_admin = False
+        db.session.commit()
+        flash(f"SSO user '{username}' demoted to normal user.", "success")
+
+        return redirect(url_for("sso_roles"))
 
     @app.route("/devlog")
     @admin_only

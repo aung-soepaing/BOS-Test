@@ -15,6 +15,7 @@ from auth_helpers import (
     parse_entra_state,
     validate_entra_id_token,
 )
+from auth_core import get_sso_user_role, is_sso_user_admin
 from extensions import db
 from models import Metric, User2
 
@@ -174,8 +175,13 @@ def register_auth_routes(app, admin_only, is_admin_username):
             username = username.strip().lower()
             session["user"] = username
             session["entra_is_user"] = True
-            session["entra_is_admin"] = False
-            session["is_admin"] = False
+            
+            # Ensure SSO user role record exists (creates it if needed)
+            get_sso_user_role(username)
+            
+            # Now check admin status from database
+            session["entra_is_admin"] = is_sso_user_admin(username)
+            session["is_admin"] = session["entra_is_admin"]
             session["auth_provider"] = "entra"
             session.permanent = True
 
@@ -206,7 +212,8 @@ def register_auth_routes(app, admin_only, is_admin_username):
             diagnostics["entra_info"] = {
                 "entra_is_user": session.get("entra_is_user", False),
                 "entra_is_admin": session.get("entra_is_admin", False),
-                "assignment_model": "Enterprise Application assignment only",
+                "assignment_model": "Database-driven role assignment",
+                "note": "For Entra users, roles are managed via the /admin/sso-roles admin page",
             }
 
         if auth_provider == "local":

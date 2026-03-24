@@ -1,6 +1,6 @@
 <div class="container section content">
-  <h2>Local User Roles Management</h2>
-  <p style="color: #666; margin-bottom: 20px;">Manage administrator role assignments for users authenticated via local credentials.</p>
+  <h2>SSO User Roles Management (Entra ID)</h2>
+  <p style="color: #666; margin-bottom: 20px;">Manage administrator role assignments for users authenticated via Microsoft Entra ID (SSO).</p>
   
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
@@ -10,40 +10,38 @@
     {% endif %}
   {% endwith %}
 
-  {% if carnet %}
+  {% if sso_users %}
     <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
       <thead>
         <tr style="background:#f0f0f0;">
-          <th>Username</th>
+          <th>Username (Entra ID)</th>
           <th>Admin Status</th>
+          <th>Last Updated</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        {% for m in carnet %}
+        {% for user in sso_users %}
         <tr>
-          <td>{{ m.username }}</td>
+          <td>{{ user.username }}</td>
           <td>
-            {% if m.username|lower in admin_usernames %}
+            {% if user.is_admin %}
               <span style="color: #155724; font-weight: bold;">✓ Administrator</span>
-            {% elif m.username|lower == break_glass_admin %}
-              <span style="color: #0066cc; font-weight: bold;">🔐 Break-Glass Admin</span>
             {% else %}
               <span style="color: #666;">User</span>
             {% endif %}
           </td>
+          <td>{{ user.updated_at.strftime('%Y-%m-%d %H:%M:%S') if user.updated_at else 'N/A' }}</td>
           <td>
-            {% if m.username|lower not in admin_usernames %}
-              <form method="post" action="{{ url_for('promote_user_to_admin') }}" style="margin:0;">
-                <input type="hidden" name="username" value="{{ m.username }}">
-                <button type="submit" class="promote-btn">Promote to Admin</button>
-              </form>
-            {% elif m.username|lower == break_glass_admin %}
-              <span style="color: #999; font-size: 13px;">System Admin</span>
-            {% else %}
-              <form method="post" action="{{ url_for('demote_user_from_admin') }}" style="margin:0;">
-                <input type="hidden" name="username" value="{{ m.username }}">
+            {% if user.is_admin %}
+              <form method="post" action="{{ url_for('demote_sso_user_from_admin') }}" style="margin:0;">
+                <input type="hidden" name="username" value="{{ user.username }}">
                 <button type="submit" class="demote-btn">Demote from Admin</button>
+              </form>
+            {% else %}
+              <form method="post" action="{{ url_for('promote_sso_user_to_admin') }}" style="margin:0;">
+                <input type="hidden" name="username" value="{{ user.username }}">
+                <button type="submit" class="promote-btn">Promote to Admin</button>
               </form>
             {% endif %}
           </td>
@@ -52,16 +50,16 @@
       </tbody>
     </table>
   {% else %}
-    <p style="color: #999; font-style: italic;">No local users have been created yet.</p>
+    <p style="color: #999; font-style: italic;">No SSO users have logged in yet.</p>
   {% endif %}
 
   <div style="margin-top: 20px;">
     <h3>How it Works</h3>
     <ul style="color: #555; line-height: 1.8;">
-      <li>Local users are created by administrators via the "Create User" page</li>
-      <li>Administrators can promote local users to grant them admin access in this application</li>
-      <li>The Break-Glass Admin cannot be demoted—it is a permanent system administrator</li>
-      <li>At least one administrator must remain in the system</li>
+      <li>SSO users are automatically recorded on their first login via Entra ID</li>
+      <li>Administrators can promote SSO users to grant them admin access in this application</li>
+      <li>Role changes take effect on the user's next login</li>
+      <li>All role changes are logged with timestamps</li>
     </ul>
   </div>
 
