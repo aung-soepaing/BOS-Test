@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 
 file_path = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
+    "source_data",
     "Vessel_Device_Installation_Tracker NV.xlsx",
 )
 column_names = [

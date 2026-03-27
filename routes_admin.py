@@ -1,5 +1,6 @@
 from flask import flash, redirect, render_template, request, url_for
 from werkzeug.security import generate_password_hash
+from auth_core import _to_bool
 from extensions import db
 from models import AdminUser, DeviceLog, Metric, SSOUserRole, User2
 
@@ -82,6 +83,16 @@ def register_admin_routes(
     def sso_roles():
         """Display all SSO users and their admin role assignments."""
         sso_users = SSOUserRole.query.order_by(SSOUserRole.username.desc()).all()
+        # Normalize legacy non-boolean values to avoid accidental admin grants.
+        changed = False
+        for user_role in sso_users:
+            normalized_flag = _to_bool(user_role.is_admin)
+            if user_role.is_admin != normalized_flag:
+                user_role.is_admin = normalized_flag
+                changed = True
+        if changed:
+            db.session.commit()
+
         return render_template(
             "admin_sso_roles.html",
             sso_users=sso_users,
@@ -103,7 +114,7 @@ def register_admin_routes(
             db.session.add(user_role)
             db.session.commit()
             flash(f"SSO user '{username}' promoted to Administrator.", "success")
-        elif user_role.is_admin:
+        elif _to_bool(user_role.is_admin):
             flash(f"SSO user '{username}' is already an Administrator.", "info")
         else:
             user_role.is_admin = True
@@ -127,7 +138,7 @@ def register_admin_routes(
             flash(f"SSO user '{username}' not found.", "error")
             return redirect(url_for("sso_roles"))
 
-        if not user_role.is_admin:
+        if not _to_bool(user_role.is_admin):
             flash(f"SSO user '{username}' is not an Administrator.", "info")
             return redirect(url_for("sso_roles"))
 
